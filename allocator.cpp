@@ -27,11 +27,34 @@ free_hand = remainder;
 return reinterpret_cast<byte*>(t) + sizeof(block);
 }
 void deallocate(block*& free_hand, void* p)
-{ 
+{
+if(p == nullptr) return;
 block* current = reinterpret_cast<block*>( reinterpret_cast<byte*>(p) - sizeof(block));
 block* t = free_hand;
+if(t == nullptr){
+current->next = nullptr;
+free_hand = current;
+return;
+}
+if( reinterpret_cast<byte*>(current) < reinterpret_cast<byte*>(free_hand) )
+{
 free_hand = current;
 current->next = t;
+}
+else{
+block* here = free_hand;
+block* there = free_hand->next;
+byte* ta = reinterpret_cast<byte*>(there);
+byte* ca = reinterpret_cast<byte*>(current);
+while( there != nullptr && ta < ca)
+{
+here = there;
+there = there->next;
+ta = reinterpret_cast<byte*>(there);
+}
+here->next = current;
+current->next = there;
+}
 }
 void coalesce(block* free_hand)
 {
