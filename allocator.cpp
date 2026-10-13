@@ -18,13 +18,42 @@ else{
 size_t a = requested_size/alignment;
 alloted_size = alignment * (a+1);
 }
-if(alloted_size + sizeof(block) > free_hand->size) return nullptr;
-size_t sr = free_hand->size - alloted_size - sizeof(block);
-block* remainder = new(reinterpret_cast<byte*>(free_hand) + alloted_size + sizeof(block)) block {sr, nullptr};
-free_hand->size = alloted_size + sizeof(block);
-block* t = free_hand;
+size_t req = alloted_size + sizeof(block);
+block* past = nullptr;
+block* present = free_hand;
+while(present != nullptr && present->size < req)
+{
+past = present;
+present = present->next;
+}
+if(present == nullptr) return nullptr;
+size_t sr = present->size - req;
+if(sr >= sizeof(block) + alignment)
+{
+block* remainder = new(reinterpret_cast<byte*>(present) + req) block{sr,nullptr};
+present->size = req;
+if(past != nullptr)
+{
+past->next = remainder;
+remainder->next = present->next;
+}
+else
+{
 free_hand = remainder;
-return reinterpret_cast<byte*>(t) + sizeof(block);
+remainder->next = present->next;
+}
+return reinterpret_cast<byte*>(present) + sizeof(block);
+}
+else{
+else {
+    if (past != nullptr)
+        past->next = present->next;
+    else
+        free_hand = present->next;
+
+    return reinterpret_cast<byte*>(present) + sizeof(block);
+}
+}
 }
 void deallocate(block*& free_hand, void* p)
 {
