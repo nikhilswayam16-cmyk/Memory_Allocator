@@ -61,9 +61,22 @@ void coalesce(block* free_hand)
 if(free_hand == nullptr) return;
 block* p = free_hand->next;
 if(p == nullptr) return;
-if(reinterpret_cast<byte*>(free_hand) + free_hand->size == reinterpret_cast<byte*>(free_hand->next)){
-free_hand->size = free_hand->size + free_hand->next->size;
-free_hand->next = p->next;
+block* here = free_hand;
+block* there = free_hand->next;
+while(there != nullptr)
+{
+if( reinterpret_cast<byte*>(here) + here->size == reinterpret_cast<byte*>(there))
+{
+here->size = here->size + there->size;
+here->next = there->next;
+there = there->next;
+}
+else
+{
+here = here->next;
+there = there->next;
+}
+}
 }
 }
 int main()
