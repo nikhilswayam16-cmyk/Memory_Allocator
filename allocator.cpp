@@ -1,117 +1,144 @@
-#include<iostream>
-#include<cstddef>
-#include<new>
-using namespace std;
-struct block{
-size_t size;
-block* next;
-};
-void* allocate(block*& free_hand, size_t requested_size)
-{
-if(free_hand == nullptr) return nullptr;
-size_t alignment = alignof(block);
-size_t alloted_size{};
-if(requested_size % alignment == 0){
-alloted_size = requested_size;
-}
-else{
-size_t a = requested_size/alignment;
-alloted_size = alignment * (a+1);
-}
-size_t req = alloted_size + sizeof(block);
-block* past = nullptr;
-block* present = free_hand;
-while(present != nullptr && present->size < req)
-{
-past = present;
-present = present->next;
-}
-if(present == nullptr) return nullptr;
-size_t sr = present->size - req;
-if(sr >= sizeof(block) + alignment)
-{
-block* remainder = new(reinterpret_cast<byte*>(present) + req) block{sr,nullptr};
-present->size = req;
-if(past != nullptr)
-{
-past->next = remainder;
-remainder->next = present->next;
-}
-else
-{
-free_hand = remainder;
-remainder->next = present->next;
-}
-return reinterpret_cast<byte*>(present) + sizeof(block);
-}
-else{
-else {
-    if (past != nullptr)
-        past->next = present->next;
-    else
-        free_hand = present->next;
+#include <cstddef>
+#include <iostream>
+#include <limits>
+#include <new>
 
-    return reinterpret_cast<byte*>(present) + sizeof(block);
+struct Block {
+    std::size_t size;  // Total size of this block, including the header.
+    Block* next;
+};
+
+// The payload begins immediately after the header, so keep the header size
+// compatible with the maximum alignment used by this educational allocator.
+static_assert(sizeof(Block) % alignof(std::max_align_t) == 0,
+              "Block header size must preserve max_align_t alignment");
+
+constexpr std::size_t kArenaSize = 4096;
+
+std::size_t align_up(std::size_t value, std::size_t alignment) {
+    if (value > std::numeric_limits<std::size_t>::max() - (alignment - 1)) {
+        return 0;  // Overflow would make the request invalid.
+    }
+    return ((value + alignment - 1) / alignment) * alignment;
 }
+
+void* allocate(Block*& free_head, std::size_t requested_size) {
+    if (free_head == nullptr || requested_size == 0) {
+        return nullptr;
+    }
+
+    constexpr std::size_t alignment = alignof(std::max_align_t);
+    const std::size_t payload_size = align_up(requested_size, alignment);
+    if (payload_size == 0 ||
+        payload_size > std::numeric_limits<std::size_t>::max() - sizeof(Block)) {
+        return nullptr;
+    }
+    const std::size_t required_size = sizeof(Block) + payload_size;
+
+    // First-fit search over the address-ordered free list.
+    Block* previous = nullptr;
+    Block* current = free_head;
+    while (current != nullptr && current->size < required_size) {
+        previous = current;
+        current = current->next;
+    }
+    if (current == nullptr) {
+        return nullptr;
+    }
+
+    const std::size_t remainder_size = current->size - required_size;
+    Block* const next_free = current->next;
+
+    // Split only if the remainder can hold a header and an aligned payload.
+    if (remainder_size >= sizeof(Block) + alignment) {
+        auto* remainder_address = reinterpret_cast<std::byte*>(current) + required_size;
+        Block* remainder = new (remainder_address) Block{remainder_size, next_free};
+        if (previous != nullptr) {
+            previous->next = remainder;
+        } else {
+            free_head = remainder;
+        }
+        current->size = required_size;
+    } else {
+        if (previous != nullptr) {
+            previous->next = next_free;
+        } else {
+            free_head = next_free;
+        }
+    }
+
+    current->next = nullptr;
+    return reinterpret_cast<std::byte*>(current) + sizeof(Block);
 }
+
+// Precondition: pointer is null or was returned by allocate() and has not
+// already been deallocated. Invalid and duplicate frees are not detected.
+void deallocate(Block*& free_head, void* pointer) {
+    if (pointer == nullptr) {
+        return;
+    }
+
+    auto* current = reinterpret_cast<Block*>(
+        reinterpret_cast<std::byte*>(pointer) - sizeof(Block));
+
+    // Insert by address so adjacent blocks can be found during coalescing.
+    Block* previous = nullptr;
+    Block* next = free_head;
+    auto* current_address = reinterpret_cast<std::byte*>(current);
+    while (next != nullptr &&
+           reinterpret_cast<std::byte*>(next) < current_address) {
+        previous = next;
+        next = next->next;
+    }
+
+    current->next = next;
+    if (previous != nullptr) {
+        previous->next = current;
+    } else {
+        free_head = current;
+    }
 }
-void deallocate(block*& free_hand, void* p)
-{
-if(p == nullptr) return;
-block* current = reinterpret_cast<block*>( reinterpret_cast<byte*>(p) - sizeof(block));
-block* t = free_hand;
-if(t == nullptr){
-current->next = nullptr;
-free_hand = current;
-return;
+
+void coalesce(Block* free_head) {
+    Block* current = free_head;
+    while (current != nullptr && current->next != nullptr) {
+        Block* next = current->next;
+        auto* end_of_current = reinterpret_cast<std::byte*>(current) + current->size;
+        if (end_of_current == reinterpret_cast<std::byte*>(next)) {
+            current->size += next->size;
+            current->next = next->next;
+            // Stay on current: it may now be adjacent to another free block.
+        } else {
+            current = next;
+        }
+    }
 }
-if( reinterpret_cast<byte*>(current) < reinterpret_cast<byte*>(free_hand) )
-{
-free_hand = current;
-current->next = t;
-}
-else{
-block* here = free_hand;
-block* there = free_hand->next;
-byte* ta = reinterpret_cast<byte*>(there);
-byte* ca = reinterpret_cast<byte*>(current);
-while( there != nullptr && ta < ca)
-{
-here = there;
-there = there->next;
-ta = reinterpret_cast<byte*>(there);
-}
-here->next = current;
-current->next = there;
-}
-}
-void coalesce(block* free_hand)
-{
-if(free_hand == nullptr) return;
-block* p = free_hand->next;
-if(p == nullptr) return;
-block* here = free_hand;
-block* there = free_hand->next;
-while(there != nullptr)
-{
-if( reinterpret_cast<byte*>(here) + here->size == reinterpret_cast<byte*>(there))
-{
-here->size = here->size + there->size;
-here->next = there->next;
-there = there->next;
-}
-else
-{
-here = here->next;
-there = there->next;
-}
-}
-}
-}
-int main()
-{
-alignas(block) byte arena[4096];
-block* A = new (arena) block {4096,nullptr};
-block* free_hand = A;
-return 0;
+
+int main() {
+    alignas(std::max_align_t) std::byte arena[kArenaSize];
+    Block* free_head = new (arena) Block{kArenaSize, nullptr};
+
+    void* first = allocate(free_head, 128);
+    void* second = allocate(free_head, 256);
+    if (first == nullptr || second == nullptr) {
+        std::cerr << "Allocation failed\n";
+        return 1;
+    }
+    std::cout << "Allocated two blocks from the 4 KiB arena.\n";
+
+    deallocate(free_head, first);
+    deallocate(free_head, second);
+    coalesce(free_head);
+
+    void* reused = allocate(free_head, 512);
+    if (reused == nullptr) {
+        std::cerr << "Allocation after coalescing failed\n";
+        return 1;
+    }
+    std::cout << "Allocation after freeing and coalescing succeeded.\n";
+
+    deallocate(free_head, reused);
+    coalesce(free_head);
+    std::cout << "Demo complete.\n";
+    return 0;
 }
